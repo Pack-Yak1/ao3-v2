@@ -66,7 +66,10 @@ class SqlClient:
         print(works)
         self.connection.commit()
 
-    def query(self, query: str, **params: dict) -> list:
+    def get_hourly_stats(self, tag_name_or_id: str|int, begin_time: float, end_time: float):
+        resp = self.__query()
+
+    def __query(self, query: str, **params: dict) -> list:
         if self.connection is None:
             raise Exception("Database connection not initialized.`")
 
