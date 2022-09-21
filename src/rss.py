@@ -5,7 +5,10 @@ import threading
 import requests
 from bs4 import BeautifulSoup
 import xmltodict
-from sqlite_client import SqlClient, get_time, WorkType
+from dateutil.parser import isoparse
+from sqlite_client import SqlClient, WorkType
+from tkinter import Tk, messagebox
+
 
 ROOT = "https://archiveofourown.org"
 
@@ -17,7 +20,9 @@ class NoRssException(Exception):
     """
 
     def __init__(self, tag):
-        super().__init__(f"No RSS feed was found for tag: '{tag}'")
+        self.tag = tag
+        self.msg = f"No RSS feed was found for tag: '{tag}'. Try getting the tag id yourself and using that instead"
+        super().__init__(self.msg)
 
 
 class RssHandler:
@@ -38,6 +43,103 @@ class RssHandler:
             name="Inserter",
         ).start()
 
+    @staticmethod
+    def get_rss_link(tag_name: str) -> typing.Tuple[str, str, int]:
+        """
+        Returns a tuple of the AO3 RSS feed link associated with `tag_name`, the tag id,
+        and the name of the tag officially on AO3.
+
+        If `tag` does not correspond to a tag on AO3 with an RSS, throws a
+        NoRssException
+        """
+        url = f"https://archiveofourown.org/tags/{tag_name}/works"
+
+        with requests.session() as session:
+            response = session.get(url)
+            soup = BeautifulSoup(response.content, "html.parser")
+            rss_soup = soup.find("a", {"title": "RSS Feed"})
+            if rss_soup is None:
+                raise NoRssException(tag_name)
+            rel_link: str = rss_soup["href"]
+            link = f"{ROOT}{rel_link}"
+
+            tag_name = soup.find("a", {"class": "tag"}).contents[0]
+            tag_id = rel_link.split("/")[2]
+            return link, tag_name, int(tag_id)
+
+    @staticmethod
+    def resolve_tag_id_or_name(value: str | int) -> typing.Tuple[str | None, int]:
+        """
+        Given either a tag id (int) or tag name (str), find the latter. Name
+        returned could be `None` if it's not been seen before
+        """
+        with SqlClient() as client:
+            if isinstance(value, str):
+                tag_name = value
+                # We have the name, try to get id from local db
+                tag_id = client.get_tag_id(value)
+                if tag_id is None:
+                    # We haven't seen an exact match for this name, query ao3
+                    _, tag_name, tag_id = RssHandler.get_rss_link(value)
+
+                # Save this tag name for future use
+                client.insert_tag(tag_name, tag_id)
+            else:
+                tag_id = value
+                tag_name = client.get_tag_name(tag_id)
+
+        return tag_name, tag_id
+
+    def scrape_tag_name_or_id(self, tag_name_or_id: str | int) -> None:
+        child = threading.Thread(
+            group=None,
+            target=self.__scrape_tag,
+            name=tag_name_or_id,
+            args=(tag_name_or_id,),
+        )
+        child.start()
+
+    def __scrape_tag(self, tag_name_or_id: int | str):
+        """
+        Main function for a daemon process that periodically scrapes `url`.
+
+        `tag_name` need not be the true tag name, it is purely for logging
+        `url` is the url of the rss feed to scrape periodically\n
+        """
+
+        if isinstance(tag_name_or_id, str):
+            url, tag_name, tag_id = RssHandler.get_rss_link(tag_name_or_id)
+
+        else:
+            tag_name, tag_id = RssHandler.resolve_tag_id_or_name(tag_name_or_id)
+            url = f"https://archiveofourown.org/tags/{tag_id}/feed.atom"
+
+        with requests.session() as session:
+            while True:
+                response = session.get(url)
+                dic = xmltodict.parse(response.content)
+
+                if tag_name is None:
+                    # Save this title, tag_id pair for reference
+                    with SqlClient() as client:
+                        tag_name = dic["feed"]["title"].split("'")[-2]
+                        client.insert_tag(tag_name_or_id, dic["feed"]["title"])
+
+                entries = dic["feed"]["entry"]
+
+                to_insert: typing.List[WorkType] = []
+                for entry in entries:
+                    title: str = entry["title"]
+                    work_id: int = int(entry["id"].split("/")[-1])
+                    published_time = isoparse(entry["published"]).timestamp()
+                    to_insert.append((tag_name_or_id, work_id, title, published_time))
+
+                print(f"""Got {len(entries)} works for \"{tag_name}\"""")
+
+                self.__thread_insert_works(to_insert)
+
+                time.sleep(self.insert_delay)
+
     def __main_insert_works(self):
         with SqlClient() as sqlite_client:
             while True:
@@ -47,55 +149,6 @@ class RssHandler:
                     with self.buffer_lock:
                         sqlite_client.insert_works(self.buffer)
                         self.buffer = []
-
-    @staticmethod
-    def get_rss_link(tag) -> typing.Tuple[str, str, int]:
-        """
-        Returns a tuple of the AO3 RSS feed link associated with `tag`, the tag id,
-        and the name of the tag officially on AO3.
-
-        If `tag` does not correspond to a tag on AO3 with an RSS, throws a
-        NoRssException
-        """
-        url = f"https://archiveofourown.org/tags/{tag}/works"
-
-        with requests.session() as session:
-            response = session.get(url)
-            soup = BeautifulSoup(response.content, "html.parser")
-            rss_soup = soup.find("a", {"title": "RSS Feed"})
-            if rss_soup is None:
-                raise NoRssException(tag)
-            rel_link: str = rss_soup["href"]
-            link = f"{ROOT}{rel_link}"
-
-            tag_name = soup.find("a", {"class": "tag"}).contents[0]
-            tag_id = rel_link.split("/")[2]
-            return link, tag_name, int(tag_id)
-
-    def scrape_tag_id(self, tag_id: int):
-        tag_name = f"tag_id {tag_id}"
-        child = threading.Thread(
-            group=None,
-            target=self.__scrape_tag_id,
-            name=tag_name,
-            args=(
-                tag_id,
-                tag_name,
-                f"https://archiveofourown.org/tags/{tag_id}/feed.atom",
-            ),
-        )
-        child.start()
-
-    def scrape_tag(self, tag: str):
-        link, tag_name, tag_id = RssHandler.get_rss_link(tag)
-        print(f"Searching for tag {tag} returned {tag_name}")
-        child = threading.Thread(
-            group=None,
-            target=self.__scrape_tag_id,
-            name=tag_name,
-            args=(tag_id, tag_name, link),
-        )
-        child.start()
 
     def __thread_insert_works(
         self,
@@ -110,29 +163,3 @@ class RssHandler:
     ):
         with self.buffer_lock:
             self.buffer += works
-
-    def __scrape_tag_id(self, tag_id: int, tag_name: str, url: str):
-        """
-        Main function for a daemon process that periodically scrapes `url`.
-
-        `url` is the url of the rss feed to scrape periodically\n
-        """
-
-        with requests.session() as session:
-            while True:
-                response = session.get(url)
-                dic = xmltodict.parse(response.content)
-                entries = dic["feed"]["entry"]
-
-                to_insert = []
-                for entry in entries:
-                    title: str = entry["title"]
-                    work_id: int = int(entry["id"].split("/")[-1])
-                    published_time = get_time(entry["published"])
-                    to_insert.append((tag_id, work_id, title, published_time))
-
-                print(f"""Got {len(entries)} works for \"{tag_name}\"""")
-
-                self.__thread_insert_works(to_insert)
-
-                time.sleep(self.insert_delay)

@@ -6,8 +6,8 @@ CREATE TABLE IF NOT EXISTS works (
   PRIMARY KEY (tag_id, work_id) ON CONFLICT IGNORE
 );
 
--- CREATE TABLE IF NOT EXISTS tags (
---   tag_id INT NOT NULL,
---   tag_name TEXT NOT NULL,
---   PRIMARY KEY (tag_id) ON CONFLICT IGNORE
--- );
+CREATE TABLE IF NOT EXISTS tags (
+  tag_id INT NOT NULL,
+  tag_name TEXT NOT NULL,
+  PRIMARY KEY (tag_id) ON CONFLICT IGNORE
+);

@@ -1,10 +1,8 @@
 """
 Module for database connections
 """
-import time
 import typing
 import sqlite3 as sl
-import ciso8601
 from config import config
 
 
@@ -50,6 +48,29 @@ class SqlClient:
         if traceback is not None:
             print("\nTraceback:", traceback)
 
+    def insert_tag(self, tag_name: str, tag_id: int) -> None:
+        cursor = self.connection.cursor()
+        query = """
+            INSERT OR IGNORE INTO tags(tag_id, tag_name)
+            VALUES (?, ?)
+        """
+        cursor.execute(query, [tag_id, tag_name])
+        if cursor.rowcount != 0:
+            print(f"Saved id {tag_id} for tag: {tag_name}")
+        self.connection.commit()
+
+    def get_tag_name(self, tag_id: int) -> str | None:
+        resp = self.query("SELECT tag_name FROM tags WHERE tag_id = ?", [tag_id])
+        if len(resp) == 0:
+            return None
+        return resp[0][0]
+
+    def get_tag_id(self, tag_name: str) -> int | None:
+        resp = self.query("SELECT tag_id FROM tags WHERE tag_name = ?", [tag_name])
+        if len(resp) == 0:
+            return None
+        return resp[0][0]
+
     def insert_works(
         self,
         works: typing.List[WorkType],
@@ -63,7 +84,6 @@ class SqlClient:
         """
         cursor.executemany(query, works)
         print(f"Inserted {cursor.rowcount} rows")
-        print(works)
         self.connection.commit()
 
     def query(self, query: str, *params: tuple) -> list:
@@ -74,9 +94,5 @@ class SqlClient:
         cursor.execute(query, *params)
         resp = cursor.fetchall()
         cursor.close()
+        self.connection.commit()
         return resp
-
-
-def get_time(iso_string: str) -> float:
-    timestamp = ciso8601.parse_datetime(iso_string)
-    return time.mktime(timestamp.timetuple())
