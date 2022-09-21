@@ -7,7 +7,6 @@ from bs4 import BeautifulSoup
 import xmltodict
 from dateutil.parser import isoparse
 from sqlite_client import SqlClient, WorkType
-from tkinter import Tk, messagebox
 
 
 ROOT = "https://archiveofourown.org"
@@ -52,7 +51,7 @@ class RssHandler:
         If `tag` does not correspond to a tag on AO3 with an RSS, throws a
         NoRssException
         """
-        url = f"https://archiveofourown.org/tags/{tag_name}/works"
+        url = f"https://archiveofourown.org/tags/{tag_name.replace('.', '*d*')}/works"
 
         with requests.session() as session:
             response = session.get(url)
@@ -68,7 +67,9 @@ class RssHandler:
             return link, tag_name, int(tag_id)
 
     @staticmethod
-    def resolve_tag_id_or_name(value: str | int) -> typing.Tuple[str | None, int]:
+    def resolve_tag_id_or_name(
+        value: typing.Union[str, int],
+    ) -> typing.Tuple[typing.Union[str, None], int]:
         """
         Given either a tag id (int) or tag name (str), find the latter. Name
         returned could be `None` if it's not been seen before
@@ -90,7 +91,7 @@ class RssHandler:
 
         return tag_name, tag_id
 
-    def scrape_tag_name_or_id(self, tag_name_or_id: str | int) -> None:
+    def scrape_tag_name_or_id(self, tag_name_or_id: typing.Union[str, int]) -> None:
         child = threading.Thread(
             group=None,
             target=self.__scrape_tag,
@@ -99,7 +100,7 @@ class RssHandler:
         )
         child.start()
 
-    def __scrape_tag(self, tag_name_or_id: int | str):
+    def __scrape_tag(self, tag_name_or_id: typing.Union[str, int]):
         """
         Main function for a daemon process that periodically scrapes `url`.
 
@@ -109,6 +110,8 @@ class RssHandler:
 
         if isinstance(tag_name_or_id, str):
             url, tag_name, tag_id = RssHandler.get_rss_link(tag_name_or_id)
+            with SqlClient() as client:
+                client.insert_tag(tag_name, tag_id)
 
         else:
             tag_name, tag_id = RssHandler.resolve_tag_id_or_name(tag_name_or_id)
@@ -123,7 +126,7 @@ class RssHandler:
                     # Save this title, tag_id pair for reference
                     with SqlClient() as client:
                         tag_name = dic["feed"]["title"].split("'")[-2]
-                        client.insert_tag(tag_name_or_id, dic["feed"]["title"])
+                        client.insert_tag(tag_name, tag_id)
 
                 entries = dic["feed"]["entry"]
 
@@ -132,7 +135,7 @@ class RssHandler:
                     title: str = entry["title"]
                     work_id: int = int(entry["id"].split("/")[-1])
                     published_time = isoparse(entry["published"]).timestamp()
-                    to_insert.append((tag_name_or_id, work_id, title, published_time))
+                    to_insert.append((tag_id, work_id, title, published_time))
 
                 print(f"""Got {len(entries)} works for \"{tag_name}\"""")
 

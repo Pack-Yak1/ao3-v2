@@ -1,23 +1,26 @@
 """Module for interfacing with user"""
 from datetime import datetime
+import typing
+from tkinter import (
+    OptionMenu,
+    Text,
+    Tk,
+    Button,
+    Entry,
+    StringVar,
+    Label,
+    Toplevel,
+    messagebox,
+)
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 import numpy as np
-from tkinter import OptionMenu, Tk, Button, Entry, StringVar, Label, messagebox
 from tkcalendar import Calendar
-from sqlite_client import SqlClient
+from sqlite_client import SqlClient, FORMATS
 from rss import RssHandler, NoRssException
 from config import config
-from typing import List, Tuple
 
-
-FORMATS = {
-    "hour": {"fmt": "%H", "default": [str(i) for i in range(24)]},
-    "day of week": {"fmt": "%w", "default": [str(i) for i in range(7)]},
-    "month": {"fmt": "%m", "default": [f"{i:02}" for i in range(12)]},
-    "year": {"fmt": "%Y", "default": None},
-}
-
-VALID_GRANULARITIES_STRING = ", ".join(list(map(lambda s: f"'{s}'", FORMATS.keys())))
+fprop = fm.FontProperties(fname="NotoSerifJP-Regular.otf")
 
 
 class AnalysisGui:
@@ -74,7 +77,7 @@ class AnalysisGui:
         )
         end_time_input.grid(column=1, row=4, padx=10, pady=10, sticky="EW")
 
-        def button_function() -> None:
+        def get_stats_button_function() -> None:
             try:
                 tag = (
                     int(tag_id_string.get())
@@ -98,8 +101,30 @@ class AnalysisGui:
                 )
 
         # Get stats button
-        button = Button(self.root, width=10, text="Get stats", command=button_function)
-        button.grid(column=2, row=1, padx=10, pady=10)
+        get_stats_button = Button(
+            self.root, width=10, text="Get stats", command=get_stats_button_function
+        )
+        get_stats_button.grid(column=2, row=1, padx=10, pady=10)
+
+        def show_tags_function():
+            with SqlClient() as client:
+                data = client.get_all_tags()
+                text_data = "\n".join(
+                    list(map(lambda tup: f"""{tup[0]:<15}| {tup[1]}""", data))
+                )
+
+            window = Toplevel(self.root)
+            window.state("zoomed")
+            window.title("Tags with saved data")
+            textbox = Text(window, height=100, width=100)
+            textbox.insert("1.0", text_data)
+            textbox.pack(fill="both")
+
+        # Show tags button
+        show_tags_button = Button(
+            self.root, width=10, text="Tags saved", command=show_tags_function
+        )
+        show_tags_button.grid(column=2, row=2, padx=10, pady=10)
 
 
 class UserClient:
@@ -108,52 +133,26 @@ class UserClient:
     def __init__(self):
         self.rss_handler = RssHandler(config["insert_delay"])
 
-    def get_stats(
-        self,
-        tag_id: int,
-        granularity: str,
-        begin_time: float,
-        end_time: float,
-    ) -> List[Tuple[str, int]]:
-        if granularity not in FORMATS:
-            raise ValueError(
-                f"Unsupported granularity: '{granularity}'. "
-                f"Must be one of: {VALID_GRANULARITIES_STRING}"
-            )
-
-        with SqlClient() as client:
-            resp = client.query(
-                """
-                SELECT
-                    strftime(?, datetime(timestamp, 'unixepoch')) AS granularity,
-                    COUNT(*)
-                FROM works
-                WHERE
-                    tag_id = ? AND
-                    timestamp BETWEEN ? AND ?
-                GROUP BY granularity
-                ORDER BY granularity
-            """,
-                (FORMATS.get(granularity)["fmt"], tag_id, begin_time, end_time),
-            )
-            return resp
-
     def show_distribution(
         self,
-        tag_name_or_id: str | int,
+        tag_name_or_id: typing.Union[str, int],
         granularity: str,
         begin_time: float,
         end_time: float,
     ) -> None:
         tag_name, tag_id = RssHandler.resolve_tag_id_or_name(tag_name_or_id)
 
-        data = self.get_stats(tag_id, granularity, begin_time, end_time)
+        with SqlClient() as client:
+            data = client.get_works_by_granularity(
+                tag_id, granularity, begin_time, end_time
+            )
 
-        default = FORMATS.get(granularity)["default"]
+        default_tups = FORMATS.get(granularity)["default"]
         labels = []
         heights = []
 
-        if default is not None:
+        if default_tups is not None:
+            default = list(map(lambda x: x[1], default_tups))
             for label in default:
                 labels.append(label)
                 height = 0
@@ -180,13 +179,15 @@ class UserClient:
             edgecolor="black",
             linewidth=2,
         )
-        axis.set_xlabel(granularity.title())
-        axis.set_ylabel("Relative Frequency (%)")
+        axis.set_xlabel(granularity.title(), fontsize=14)
+        axis.set_ylabel("Relative Frequency (%)", fontsize=14)
         axis.set_xticks(x_vals)
         axis.set_xticklabels(labels)
         axis.set_ybound(0, None)
         axis.set_title(
-            f"Breakdown of posts for {tag_name} (tag id: {tag_id}) by {granularity}"
+            f"Breakdown of posts for {tag_name} (tag id: {tag_id}) by {granularity}",
+            fontproperties=fprop,
+            fontsize=18,
         )
 
         for (x_val, y_val), raw_val in zip(
