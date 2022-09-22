@@ -6,3 +6,7 @@ Scripts
 share
 Include
 .vs
+*.spec
+build
+dist
+logs

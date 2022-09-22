@@ -8,7 +8,6 @@ import xmltodict
 from dateutil.parser import isoparse
 from sqlite_client import SqlClient, WorkType
 
-
 ROOT = "https://archiveofourown.org"
 
 
@@ -36,11 +35,20 @@ class RssHandler:
         self.buffer: typing.List[WorkType] = []
         self.buffer_lock = threading.Lock()
         self.last_insert_time = time.time()
-        threading.Thread(
+        self.live = True
+        thread = threading.Thread(
             group=None,
             target=self.__main_insert_works,
             name="Inserter",
-        ).start()
+        )
+        thread.start()
+
+    def __enter__(self):
+        self.live = True
+        return self
+
+    def __exit__(self, _1, _2, _3):
+        self.live = False
 
     @staticmethod
     def get_rss_link(tag_name: str) -> typing.Tuple[str, str, int]:
@@ -98,6 +106,7 @@ class RssHandler:
             name=tag_name_or_id,
             args=(tag_name_or_id,),
         )
+        child.daemon = True
         child.start()
 
     def __scrape_tag(self, tag_name_or_id: typing.Union[str, int]):
@@ -118,7 +127,7 @@ class RssHandler:
             url = f"https://archiveofourown.org/tags/{tag_id}/feed.atom"
 
         with requests.session() as session:
-            while True:
+            while self.live:
                 response = session.get(url)
                 dic = xmltodict.parse(response.content)
 
@@ -145,7 +154,7 @@ class RssHandler:
 
     def __main_insert_works(self):
         with SqlClient() as sqlite_client:
-            while True:
+            while self.live:
                 time.sleep(self.insert_delay)
                 if len(self.buffer) > 0:
                     print(f"Attempting to insert {len(self.buffer)} works to database")

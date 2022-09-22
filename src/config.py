@@ -6,7 +6,7 @@ import os
 def load_config():
     # Load config file
     with open(
-        os.path.join(os.getcwd(), os.pardir, "config", "default.json"),
+        os.path.join(os.getcwd(), "config", "default.json"),
         "r",
         encoding="utf-8",
     ) as js_fp:

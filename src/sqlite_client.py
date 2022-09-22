@@ -1,6 +1,7 @@
 """
 Module for database connections
 """
+import os
 import typing
 import sqlite3 as sl
 from config import config
@@ -18,12 +19,10 @@ FORMATS = {
         "fmt": "%H",
         "ugly_fmt": "%H",
         "pretty_fmt": "%H",
-        "default": [(str(i), str(i)) for i in range(24)],
+        "default": [(f"{i:02}", f"{i:02}") for i in range(24)],
     },
     "day of week": {
         "fmt": "%w",
-        "ugly_fmt": "%w",
-        "pretty_fmt": "%a",
         "default": [
             ("0", "Sun"),
             ("1", "Mon"),
@@ -36,8 +35,6 @@ FORMATS = {
     },
     "month": {
         "fmt": "%m",
-        "ugly_fmt": "%m",
-        "pretty_fmt": "%b",
         "default": [
             ("01", "Jan"),
             ("02", "Feb"),
@@ -53,7 +50,7 @@ FORMATS = {
             ("12", "Dec"),
         ],
     },
-    "year": {"fmt": "%Y", "ugly_fmt": "%Y", "pretty_fmt": "%Y", "default": None},
+    "year": {"fmt": "%Y", "default": None},
 }
 
 VALID_GRANULARITIES_STRING = ", ".join(list(map(lambda s: f"'{s}'", FORMATS.keys())))
@@ -68,12 +65,12 @@ class SqlClient:
 
     def __init__(self):
         connection = sl.connect(config["database_file_name"])
-        print("Initializing database")
-        with open("schema.sql", "r", encoding="utf-8") as schema_fd:
+        with open(
+            os.path.join(os.getcwd(), "schema", "schema.sql"), "r", encoding="utf-8"
+        ) as schema_fd:
             schema = schema_fd.read().split(";")
         for create_table_command in schema:
             connection.execute(create_table_command)
-        print("Database initialized")
 
         connection.commit()
         connection.close()
@@ -126,7 +123,9 @@ class SqlClient:
             VALUES (?, ?, ?, ?)
         """
         cursor.executemany(query, works)
-        print(f"Inserted {cursor.rowcount} rows")
+        print(
+            f"From the {len(works)} works obtained, {cursor.rowcount} new works were inserted"
+        )
         self.connection.commit()
 
     def get_works_by_granularity(
@@ -154,7 +153,6 @@ class SqlClient:
         """
         db_format = FORMATS.get(granularity)["fmt"]
         resp = self.query(query, (db_format, tag_id, begin_time, end_time))
-        print(resp)
 
         def prettify_label(tpl):
             old_label = tpl[0]
@@ -167,7 +165,6 @@ class SqlClient:
             return new_label, tpl[1]
 
         resp = list(map(prettify_label, resp))
-        print(resp)
         return resp
 
     def query(self, query: str, *params: tuple) -> list:

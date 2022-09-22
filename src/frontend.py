@@ -1,5 +1,6 @@
 """Module for interfacing with user"""
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
 import typing
 from tkinter import (
     OptionMenu,
@@ -15,12 +16,15 @@ from tkinter import (
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import numpy as np
-from tkcalendar import Calendar
+
+# from tkcalendar import Calendar
 from sqlite_client import SqlClient, FORMATS
 from rss import RssHandler, NoRssException
 from config import config
 
-fprop = fm.FontProperties(fname="NotoSerifJP-Regular.otf")
+fprop = fm.FontProperties(
+    fname=os.path.join(os.getcwd(), "fonts", "NotoSerifJP-Regular.otf")
+)
 
 
 class AnalysisGui:
@@ -64,17 +68,19 @@ class AnalysisGui:
         # Begin time
         begin_time_label = Label(self.root, text="Begin time", width=15)
         begin_time_label.grid(column=0, row=3, padx=10, pady=10, sticky="N")
-        begin_time_input = Calendar(
-            self.root, selectmode="day", year=now.year, month=now.month, day=now.day - 1
+        begin_time_string = StringVar(
+            value=datetime.strftime(now - timedelta(days=1), "%m/%d/%Y")
         )
+        begin_time_input = Entry(self.root, width=65, textvariable=begin_time_string)
         begin_time_input.grid(column=1, row=3, padx=10, pady=10, sticky="EW")
 
         # End time
         end_time_label = Label(self.root, text="End time", width=15)
         end_time_label.grid(column=0, row=4, padx=10, pady=10, sticky="N")
-        end_time_input = Calendar(
-            self.root, selectmode="day", year=now.year, month=now.month, day=now.day
+        end_time_string = StringVar(
+            value=datetime.strftime(now + timedelta(days=1), "%m/%d/%Y")
         )
+        end_time_input = Entry(self.root, width=65, textvariable=end_time_string)
         end_time_input.grid(column=1, row=4, padx=10, pady=10, sticky="EW")
 
         def get_stats_button_function() -> None:
@@ -86,11 +92,14 @@ class AnalysisGui:
                 )
                 granularity = granularity_selection.get().lower()
                 begin_time = datetime.strptime(
-                    begin_time_input.get_date(), "%m/%d/%y"
+                    begin_time_string.get(),
+                    "%m/%d/%Y",
                 ).timestamp()
                 end_time = datetime.strptime(
-                    end_time_input.get_date(), "%m/%d/%y"
-                ).timestamp()
+                    end_time_string.get(),
+                    "%m/%d/%Y",
+                )
+                end_time = (end_time + timedelta(days=1)).timestamp()
                 self.user_client.show_distribution(
                     tag, granularity, begin_time, end_time
                 )
@@ -125,6 +134,7 @@ class AnalysisGui:
             self.root, width=10, text="Tags saved", command=show_tags_function
         )
         show_tags_button.grid(column=2, row=2, padx=10, pady=10)
+        self.root.mainloop()
 
 
 class UserClient:
@@ -172,13 +182,20 @@ class UserClient:
         y_vals = np.array(heights) / (normalizer if normalizer != 0 else 1) * 100
         _, axis = plt.subplots()
 
-        axis.bar(
+        bars = axis.bar(
             x_vals,
             y_vals,
             width=1,
             edgecolor="black",
             linewidth=2,
         )
+        axis.bar_label(
+            bars,
+            labels=[
+                f"{raw_val} post{'s' if raw_val != 1 else ''}" for raw_val in heights
+            ],
+        )
+
         axis.set_xlabel(granularity.title(), fontsize=14)
         axis.set_ylabel("Relative Frequency (%)", fontsize=14)
         axis.set_xticks(x_vals)
@@ -189,16 +206,6 @@ class UserClient:
             fontproperties=fprop,
             fontsize=18,
         )
-
-        for (x_val, y_val), raw_val in zip(
-            np.hstack((x_vals.reshape(-1, 1), y_vals.reshape(-1, 1))), heights
-        ):
-            axis.text(
-                x_val,
-                y_val + 0.4,
-                f"{raw_val} post{'s' if raw_val != 1 else ''}",
-                horizontalalignment="center",
-            )
 
         mng = plt.get_current_fig_manager()
         mng.window.state("zoomed")
